@@ -14,6 +14,7 @@ import ImageIO
 import CoreMotion
 import Foundation
 
+var soundnohaptic = false
 let semaphoretoloaddata = DispatchSemaphore(value: 0)
 let semaphoreswitchingtap = DispatchSemaphore(value: 0)
 var captureSession = AVCaptureSession()
@@ -109,6 +110,13 @@ var pauseduration = 0
 var gradeofcolor = CGFloat(0)
 var ratioadj = Float(0)
 var typeplay = false
+var hapticinit = false
+var devicehapticdevice = -1
+var defaultfornohaptics = "Your device doesn't support haptics type used by VibView"
+var defaultfornohapticsinstructions = "It has been lauched the audio mode"
+var defaultforok = "Ok"
+var passtosound = 0
+
 //var lastrendere = Array(repeating: UInt64(0), count: latoquadratoaudio*latoquadratoaudio*2)
 /*
  FCRNFP16 Copyright (c) 2016, Iro Laina
@@ -169,7 +177,7 @@ var typeplay = false
 
 
 class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate, UINavigationControllerDelegate, AVCaptureDepthDataOutputDelegate  {
-    @IBOutlet var filteredImage: UIImageView!
+    var filteredImage: UIImageView!
     var conf : MLModelConfiguration!
     var accessibilityview = UIView()
     var pinching = false
@@ -346,8 +354,11 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
 
 
 
-   
-   
+    override func didReceiveMemoryWarning() {
+        backCamera.setminframe()
+        backCameradepth.setminframe()
+    }
+
      @objc func tapped() {
         xcorrection = Float(widthcamera)/screenwidth
         ycorrection = Float(heightcamera)/screenheight
@@ -474,17 +485,22 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         savevalues()
 }
 
-    override func viewWillAppear(_ animated: Bool) {
-        DispatchQueue.main.async{if !self.createAndStartHapticEngine() {exit(0)}}
-    }
+   // override func viewWillAppear(_ animated: Bool) {
+  //
+  //  }
 //    override func viewDidAppear(_ animated: Bool) {
  //
   //  }
     
+    override open var shouldAutorotate: Bool {
+        return false}
+    
     override func viewDidLoad() {
         super.viewDidLoad()
-        self.loadvalues()
-        semaphoretoloaddata.wait()
+        
+        filteredImage = UIImageView()
+        filteredImage.frame = self.view.frame
+        view.addSubview(filteredImage)
         captureSession = AVCaptureSession()
         audioPlayer = [AVAudioPlayerNode]()
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
@@ -523,17 +539,22 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         pinchGesture.cancelsTouchesInView = true
         self.accessibilityview.addGestureRecognizer(pinchGesture)
         self.view.addSubview(accessibilityview)
-        self.checkCameraAccess();if soundstred == false && mode == 3 {self.playsoundsoraccesslibrary(typplay : typeplay)}
+        self.loadvalues()
+        semaphoretoloaddata.wait()
+        devicehapticdevice = UIDevice.current.value(forKey: "_feedbackSupportLevel") as? Int ?? -1;
+        self.checkCameraAccess();
+        if soundstred == false && mode == 3 {self.playsoundsoraccesslibrary(typplay : typeplay)}
     }
     
     func checkCameraAccess() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .denied:
             print("Denied, request permission from settings")
-            presentCameraSettings()
+    
+            self.alertnopermissiontocamera()
         case .restricted:
             print("Restricted, device owner must approve")
-            presentCameraSettings()
+            self.alertnopermissiontocamera()
         case .authorized:
             print("Authorized, proceed")
             self.setupDevice()
@@ -544,12 +565,34 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                     print("Permission granted, proceed")
                     self.setupDevice();
                        
-                } else {print("Permission denied")}
+                } else {print("Permission denied")
+                    self.alertnopermissiontocamera()
+                }
             }
         
             
         }
     }
+    
+    func setupDevice() {
+        let deviceDiscoverySession = AVCaptureDevice.DiscoverySession(deviceTypes: [
+                                                                        .builtInWideAngleCamera,
+                                                                        .builtInUltraWideCamera,
+                                                                        .builtInTelephotoCamera,
+                                                                        .builtInDualCamera,
+                                                                        .builtInDualWideCamera,
+                                                                        .builtInTripleCamera
+        ], mediaType: AVMediaType.video, position: AVCaptureDevice.Position.back)
+        let devices = deviceDiscoverySession.devices
+        for device in devices {
+            if backCameradepth == nil &&
+                (device.deviceType == .builtInDualCamera || device.deviceType == .builtInTripleCamera || device.deviceType == .builtInDualWideCamera) {
+                do {backCameradepth = device}
+                depthpresence = true
+                }}
+        if !depthpresence {for device in devices {if device.position == .back && device != backCameradepth && backCamera == nil { backCamera = device; break}}}
+        if self.backCameradepth != nil{self.configureDepthCaptureSession()} else if self.backCamera != nil {self.setupInputOutput()} else {exit(0)};
+            }
 
     func getLanguageISO() -> String {
       let locale = String(Locale.preferredLanguages[0].prefix(2))
@@ -557,7 +600,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     }
     
     func showAlerttoclose(texttoshow: String, acceptstring: String, yes: String) {
-        let alertController = UIAlertController (title: texttoshow, message: acceptstring, preferredStyle: .alert)
+        DispatchQueue.main.async{
+            let alertController = UIAlertController (title: texttoshow, message: acceptstring, preferredStyle: .alert)
             let settingsAction = UIAlertAction(title: yes, style: .default) { (_) -> Void in
                 guard let settingsUrl = URL(string: UIApplication.openSettingsURLString) else {
                     return
@@ -571,7 +615,17 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             alertController.addAction(settingsAction)
             let cancelAction = UIAlertAction(title: "Cancel", style: .default, handler: nil)
             alertController.addAction(cancelAction)
-        DispatchQueue.main.async{  self.present(alertController, animated: true, completion: nil)}
+        self.present(alertController, animated: true, completion: nil)}
+    }
+    
+    func showpopup(texttoshow: String, acceptstring: String, yes: String) {
+        let alertController = UIAlertController (title: texttoshow, message: acceptstring, preferredStyle: .alert)
+        let settingsAction = UIAlertAction(title: yes, style: .default) { (_) -> Void in
+            alertController.removeFromParent()
+                return
+            }
+        alertController.addAction(settingsAction)
+        self.present(alertController, animated: true, completion: nil)
     }
     
     func alertnopermissiontocamera() {
@@ -647,24 +701,140 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         
     }
     
-    func presentCameraSettings() {
-        alertnopermissiontocamera()
-        return
-       /* let alertController = UIAlertController(title: "Error",
-                                      message: "Camera access is denied",
-                                      preferredStyle: .alert)
-        alertController.addAction(UIAlertAction(title: "Cancel", style: .default))
-        alertController.addAction(UIAlertAction(title: "Settings", style: .cancel) { _ in
-            if let url = URL(string: UIApplication.openSettingsURLString) {
-                UIApplication.shared.open(url, options: [:], completionHandler: { _ in
-                    // Handle
-                })
-            }
-        })
+    func alertnohaptics() {
 
-        present(alertController, animated: true)*/
+        let code = getLanguageISO()
+        switch code {
+        case "ar":
+            defaultfornohaptics = "VibView جهازك لا يدعم نوع اللمسات المستخدم بواسطة "; defaultfornohapticsinstructions = "تم تشغيل وضع الصوت"; defaultforok = "موافق"
+        case "fi":
+            defaultfornohaptics = "Laitteesi ei tue VibView: n käyttämää haptiikkatyyppiä"
+            defaultfornohapticsinstructions = "Äänitila on ylitetty"
+            defaultforok = "Ok"
+        case "fr":
+            defaultfornohaptics = "Votre appareil ne prend pas en charge le type haptique utilisé par VibView"
+            defaultfornohapticsinstructions = "Il a été lancé le mode audio"
+            defaultforok = "Ok"
+        case "ja":
+            defaultfornohaptics = "お使いのデバイスはVibViewで使用される触覚タイプをサポートしていません"
+            defaultfornohapticsinstructions = "オーディオモードが開始されました"
+            defaultforok = "OK"
+        case "it":
+            defaultfornohaptics = "Il tuo dispositivo non supporta il tipo aptico utilizzato da VibView"
+            defaultfornohapticsinstructions = "È stata lanciata la modalità audio"
+            defaultforok = "Ok"
+        case "pt":
+            defaultfornohaptics = "Seu dispositivo não suporta o tipo de sensação tátil usado pelo VibView"
+            defaultfornohapticsinstructions = "Foi lançado o modo de áudio"
+            defaultforok = "Ok"
+        case "es":
+            defaultfornohaptics = "Su dispositivo no es compatible con el tipo de háptica que usa VibView"
+            defaultfornohapticsinstructions = "Se ha iniciado el modo de audio"
+            defaultforok = "Aceptar"
+        case "sv":
+            defaultfornohaptics = "Enheten stöder inte haptics-typ som används av VibView"
+            defaultfornohapticsinstructions = "Det har uppskattats för ljudläget"
+            defaultforok = "Ok"
+        case "de":
+            defaultfornohaptics = "Ihr Gerät unterstützt den von VibView verwendeten Haptiktyp nicht."
+            defaultfornohapticsinstructions = "Der Audiomodus wurde gestartet."
+            defaultforok = "Ok"
+        case "ca":
+            defaultfornohaptics = "El vostre dispositiu no admet el tipus d'haptics que utilitza VibView"
+            defaultfornohapticsinstructions = "S'ha llançat el mode d'àudio"
+            defaultforok = "D'acord"
+        case "cs":
+            defaultfornohaptics = "Vaše zařízení nepodporuje typ haptiky používaný VibView"
+            defaultfornohapticsinstructions = "Byl spuštěn zvukový režim"
+            defaultforok = "OK"
+        case "zh":
+            defaultfornohaptics = "您的设备不支持VibView使用的触觉类型"
+            defaultfornohapticsinstructions = "它已经启动了音频模式"
+            defaultforok = "确定"
+        case "ko":
+            defaultfornohaptics = "장치가 VibView에서 사용하는 햅틱 유형을 지원하지 않습니다."
+            defaultfornohapticsinstructions = "오디오 모드로 전환되었습니다"
+            defaultforok = "확인"
+        case "hr":
+            defaultfornohaptics = "Vaš uređaj ne podržava tip haptika koji koristi VibView"
+            defaultfornohapticsinstructions = "Pokrenut je audio način rada"
+            defaultforok = "U redu"
+        case "da":
+            defaultfornohaptics = "Din enhed understøtter ikke haptics-type, der bruges af VibView"
+            defaultfornohapticsinstructions = "Det er blevet lukket for lydtilstanden"
+            defaultforok = "Ok"
+        case "he":
+            defaultfornohaptics = "VibView המכשיר שלך אינו תומך בסוג הפטיקה המשמש את "
+            defaultfornohapticsinstructions = "זה הוענק למצב האודיו"
+            defaultforok = "בסדר"
+        case "el":
+            defaultfornohaptics = "Η συσκευή σας δεν υποστηρίζει τύπο haptics που χρησιμοποιείται από το VibView"
+            defaultfornohapticsinstructions = "Έχει διαμορφωθεί η λειτουργία ήχου"
+            defaultforok = "Εντάξει"
+        case "hi":
+            defaultfornohaptics = "आपका उपकरण VibView द्वारा उपयोग किए गए हापिक्स प्रकार का समर्थन नहीं करता है"
+            defaultfornohapticsinstructions = "यह ऑडियो मोड की सराहना की गई है"
+            defaultforok = "ठीक है"
+        case "id":
+            defaultfornohaptics = "Perangkat Anda tidak mendukung jenis haptics yang digunakan oleh VibView"
+            defaultfornohapticsinstructions = "Ini telah meluncurkan mode audio"
+            defaultforok = "Ok"
+        case "ms":
+            defaultfornohaptics = "Peranti anda tidak menyokong jenis haptik yang digunakan oleh VibView"
+            defaultfornohapticsinstructions = "Telah disempurnakan mod audio"
+            defaultforok = "Ok"
+        case "no":
+            defaultfornohaptics = "Enheten din støtter ikke haptics-typen som brukes av VibView"
+            defaultfornohapticsinstructions = "Det er blitt lovordet lydmodus"
+            defaultforok = "Ok"
+        case "nl":
+            defaultfornohaptics = "Uw apparaat ondersteunt geen haptisch type gebruikt door VibView"
+            defaultfornohapticsinstructions = "Het is gestart met de audiomodus"
+            defaultforok = "Ok"
+        case "pl":
+            defaultfornohaptics = "Twoje urządzenie nie obsługuje typu haptyki używanego przez VibView"
+            defaultfornohapticsinstructions = "Został uruchomiony tryb audio"
+            defaultforok = "Ok"
+        case "ro":
+            defaultfornohaptics = "Dispozitivul dvs. nu acceptă tipul de haptic folosit de VibView"
+            defaultfornohapticsinstructions = "A fost lansat modul audio"
+            defaultforok = "Ok"
+        case "ru":
+            defaultfornohaptics = "Ваше устройство не поддерживает тип тактильных ощущений, используемый VibView"
+            defaultfornohapticsinstructions = "Включен аудио режим"
+            defaultforok = "Хорошо"
+        case "sk":
+            defaultfornohaptics = "Vaše zariadenie nepodporuje typ haptiky používaný VibView"
+            defaultfornohapticsinstructions = "Bol spustený zvukový režim"
+            defaultforok = "Dobre"
+        case "th":
+            defaultfornohaptics = "อุปกรณ์ของคุณไม่รองรับประเภท haptics ที่ VibView ใช้"
+            defaultfornohapticsinstructions = "เปิดโหมดเสียงแล้ว"
+            defaultforok = "ตกลง"
+        case "tr","tk":
+            defaultfornohaptics = "Cihazınız VibView tarafından kullanılan haptik türünü desteklemiyor"
+            defaultfornohapticsinstructions = "Ses modu kaldırıldı"
+            defaultforok = "Tamam"
+        case "uk":
+            defaultfornohaptics = "Ваш пристрій не підтримує тип хаптики, що використовується VibView"
+            defaultfornohapticsinstructions = "Був запущений аудіорежим"
+            defaultforok = "Добре"
+        case "hu":
+            defaultfornohaptics = "Az Ön készüléke nem támogatja a VibView által használt haptics típust"
+            defaultfornohapticsinstructions = "A hangmódot kiírták"
+            defaultforok = "Ok"
+        case "vi":
+            defaultfornohaptics = "Thiết bị của bạn không hỗ trợ loại haptics được VibView sử dụng"
+            defaultfornohapticsinstructions = "Chế độ âm thanh đã bị loại bỏ"
+            defaultforok = "Ok"
+        default:
+            defaultfornohaptics = "Your device doesn't support haptics type used by VibView"
+            defaultfornohapticsinstructions = "It has been lauched the audio mode"
+            defaultforok = "Ok"
+        }
+        return
+        
     }
-    
     
     func loadvalues() {
         do{if let SavedPreferences = UserDefaults.standard.object(forKey: "VibViewSavedpreferences") as? Data{
@@ -678,6 +848,13 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             mode = savedefault[5]! as! Int
             if mode != 0 {sccreentouched = false}
             versionanalisys = savedefault[6]! as! Int
+            do{if let SavedPreferences = UserDefaults.standard.object(forKey: "VibViewSavedpreferences1") as? Data{
+            if let arrtry = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(SavedPreferences){
+                let savedefault = arrtry as! [Any?]
+                passtosound = savedefault [0]! as! Int
+                print("dafba",passtosound)
+                
+            }}} catch {print("notsavedpreferences");}
             semaphoretoloaddata.signal()
         }
         } else {semaphoretoloaddata.signal()}
@@ -690,11 +867,14 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         let defaults = UserDefaults.standard
         do {let encodedData = try NSKeyedArchiver.archivedData(withRootObject: (saveddefault ?? [true,true,false,10,Float(1.3),0,false,0]) as Array, requiringSecureCoding: false)
             defaults.set(encodedData, forKey: "VibViewSavedpreferences")} catch {print("not saved")}
+        do {let encodedData = try NSKeyedArchiver.archivedData(withRootObject: ([passtosound,0,0,0,0,0,0,0]) as Array, requiringSecureCoding: false)
+            defaults.set(encodedData, forKey: "VibViewSavedpreferences1")} catch {print("not saved")}
     }
     
     
     
     @objc func timerusage(){
+        if soundnohaptic {return()}
         if mode == 3 || mode == 1 {return}
         switch vibrating {
         case true:
@@ -711,8 +891,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             inhibittimer = true
             pauseduration = 0;
             if vibrating {do {vibrating=false
-                try player?.stop(atTime: CHHapticTimeImmediate);
-            } catch let error {print("Error stopping the continuous haptic player: \(error)")}}
+                try? player?.stop(atTime: CHHapticTimeImmediate);
+            }}
             vibrating = false
             sccreentouched = false
             return
@@ -720,34 +900,15 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     }
     
     func createAndStartHapticEngine() -> Bool {
-        
+         
         do {engine = try CHHapticEngine()} catch let error {fatalError("Engine Creation Error: \(error)");return false}
         do {try engine.start()
-            hapticinhibittimer = Timer.scheduledTimer(timeInterval: TimeInterval(1), target: self, selector: #selector(timerusage), userInfo: nil, repeats: true)
             return true;
         } catch {print("Failed to start the engine: \(error)");return false}
     }
     
 
-    func setupDevice() {
-        let deviceDiscoverySession = AVCaptureDevice.DiscoverySession(deviceTypes: [
-                                                                        .builtInWideAngleCamera,
-                                                                        .builtInUltraWideCamera,
-                                                                        .builtInTelephotoCamera,
-                                                                       // .builtInDualCamera,
-                                                                        .builtInDualWideCamera,
-                                                                        .builtInTripleCamera
-        ], mediaType: AVMediaType.video, position: AVCaptureDevice.Position.back)
-        let devices = deviceDiscoverySession.devices
-        for device in devices {
-            if backCameradepth == nil &&
-                (device.deviceType == .builtInDualCamera || device.deviceType == .builtInTripleCamera || device.deviceType == .builtInDualWideCamera) {
-                do {backCameradepth = device}
-                depthpresence = true
-                }}
-        if !depthpresence {for device in devices {if device.position == .back && device != backCameradepth && backCamera == nil { backCamera = device; break}}}
-        if self.backCameradepth != nil{self.configureDepthCaptureSession()} else if self.backCamera != nil {self.setupInputOutput()} else {exit(0)};
-            }
+
     
   /*  func checknewsounds(){
         return
@@ -820,8 +981,9 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                 if backCamera.isExposureModeSupported(.continuousAutoExposure) == true {backCamera.exposureMode = .continuousAutoExposure}} catch {print("no lock of camera available")}
             backCamera.unlockForConfiguration();
         } catch {print(error)}
+        
         captureSession.startRunning()
-        DispatchQueue.main.async { self.addobserver();}
+        self.addobserver()
         self.view.isUserInteractionEnabled = true
         
     }
@@ -832,7 +994,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer){
         cameraImage = CIImage(cvImageBuffer: pixelBuffer)
         
-            DispatchQueue.main.async {
+            if cameraImage != nil {DispatchQueue.main.async {
             if soundstred {self.playsounds(colorimage: self.cameraImage)}
                 if sccreentouched && versionanalisys == 0{
             let greencolor = color[1] //wl 520 - 565
@@ -854,13 +1016,14 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                 self.accodaflusso(filteredImage: imui)}
                 
             }
-        }
+            }}
             
         }
     func depthDataOutput(_ output: AVCaptureDepthDataOutput,
                          didOutput depthData: AVDepthData,
                          timestamp: CMTime,
                          connection: AVCaptureConnection) {
+       
       guard tap != false else {
         return
       }
@@ -872,8 +1035,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         convertedDepth = depthData
       }
       let pixelBuffer = convertedDepth.depthDataMap
-                      
-      DispatchQueue.main.async {pixelBuffer.clamp(); if (soundstred == true && (depthforsound[0] != -1 || count < basecount)) {count+=1;return}; }
+        if pixelBuffer != nil {
+            DispatchQueue.main.async {pixelBuffer.clamp(); if (soundstred == true && (depthforsound[0] != -1 || count < basecount)) {count+=1;return}; }}
     }
     
     
@@ -881,9 +1044,9 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         
         heightcamera = Int(filteredImage.size.height);widthcamera = Int(filteredImage.size.width)
         DispatchQueue.main.async {if soundstred == false {
-              self.filteredImage.image = filteredImage
-            if sccreentouched && !depthpresence && mode == 0 && captureSession.isRunning {vibradepthrt(vibr: 0.5)} else if sccreentouched && mode == 2 && captureSession.isRunning {
-                color = filteredImage.averageColor ?? [0,0,0]; vibracolor(color: color)
+            self.filteredImage.image = filteredImage
+            if sccreentouched && !depthpresence && mode == 0 && captureSession.isRunning {self.vibradepthrt(vibr: 0.5)} else if sccreentouched && mode == 2 && captureSession.isRunning {
+                color = filteredImage.averageColor ?? [0,0,0]; self.vibracolor(color: color)
             }
             }
         }
@@ -1098,7 +1261,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         
         sccreentouched = false;
-        if (soundstred == false && !audioPlayer.isEmpty) || pinching {return}
+        if soundnohaptic {sounds(environment: environment).soundvibrate(inte: 0, sharp: 0.5)}
+        if (soundstred == false && (!audioPlayer.isEmpty && !soundnohaptic)) || pinching {return}
         if motionManager.isDeviceMotionActive && tap == true {motionManager.stopDeviceMotionUpdates()
             corrtiltx = 10;corrtilty = 10;prem12 = 0;prem33 = 0;prem23 = 0;prem21 = 0;
         }
@@ -1115,18 +1279,31 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     
     
     
- //   override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?){
-      //  if motion == .motionShake  {
-      //      playsoundsoraccesslibrary(type: 2)
-      //  }
-//    }
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?){
+        if motion == .motionShake  {
+            let filetoplay = ["1","2","3","4","5","6","2","4","6","1","3","5","1","7","8","9","10","11","12","13","14","15","16","audio1"]
+            if passtosound > filetoplay.count - 1 {passtosound = 0;if soundnohaptic {sounds(environment: environment).soundoff()}} else {if passtosound == 0 {passtosound = 10} else {passtosound += 1};if soundnohaptic {sounds(environment: environment).soundoff();sounds(environment: environment).soundon()}}
+            savevalues()
+        }
+    }
     
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         
+        if hapticinhibittimer == nil {hapticinhibittimer = Timer.scheduledTimer(timeInterval: TimeInterval(1), target: self, selector: #selector(timerusage), userInfo: nil, repeats: true)}
+        if devicehapticdevice == -1 {return}
+        if !soundnohaptic {
+        if devicehapticdevice > passtosound {
+            if !hapticinit && mode != 3 && !soundnohaptic{if !self.createAndStartHapticEngine() {exit(0)} else {hapticinit = true}}} else {
+                if !soundnohaptic {
+                    if passtosound == 0 {
+                alertnohaptics();
+                        showpopup(texttoshow: defaultfornohaptics, acceptstring: defaultfornohapticsinstructions, yes: defaultforok)}
+                    sounds(environment: environment).soundon()
+                    return}}}
         if motionManager.isDeviceMotionActive && tap {motionManager.stopDeviceMotionUpdates()}
         xcorrection = Float(widthcamera)/screenwidth
         ycorrection = Float(heightcamera)/screenheight
-        if (soundstred == false && !audioPlayer.isEmpty) || pinching  {return}
+        if (soundstred == false && (!audioPlayer.isEmpty && !soundnohaptic)) || pinching  {return}
             if self.traitCollection.forceTouchCapability == .unavailable {
                 tdtouchabsencedefault = 1
             }
@@ -1140,7 +1317,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             ytouch = (Float(screenheight) - Float(location.y))*ycorrection
             forceoftouch = Float(max(touch.force,tdtouchabsencedefault))
         
-        if rengine.isRunning == true {return}
+        if rengine.isRunning == true && !soundnohaptic{return}
         if versionanalisys == 2 {return}
         if newdepthframe == false && tap == false {return}
         if tap == false && !pinching && !captureSession.isRunning {motion()}
@@ -1155,8 +1332,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?)  {
         if motionManager.isDeviceMotionActive && tap {motionManager.stopDeviceMotionUpdates()}
-        if (soundstred == false && !audioPlayer.isEmpty) || pinching  {return}
-        if rengine.isRunning == true {return}
+        if (soundstred == false && (!audioPlayer.isEmpty && !soundnohaptic)) || pinching  {return}
+        if rengine.isRunning == true && !soundnohaptic {return}
         if inhibittimer == true {return}
         if versionanalisys == 2 {return}
         prextouch = xtouch;preytouch = ytouch
@@ -1217,6 +1394,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         var xtouchcorr = Float(0)
         var ytouchcorr = Float(0)
         //print(xtouch,xcorrection)
+
         switch orientationr{
         case 4:
              xtouchcorr = (ytouch - corrtilty*1000)/12
@@ -1256,13 +1434,21 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
                 return} else {touchvibr = (min(max(0,(1-convertedHeatmap [min(159,Int(xtouchcorr))][min(127,128-Int(ytouchcorr))])),1))}
         }
         pretouchvibr = touchvibr
-        if touchvibr > pretouchvibr + 0.15 {let gen = UIImpactFeedbackGenerator(); gen.impactOccurred(intensity: CGFloat(min(1,touchvibr - pretouchvibr)));}
+        if touchvibr > pretouchvibr + 0.15 && !soundnohaptic {let gen = UIImpactFeedbackGenerator(); gen.impactOccurred(intensity: CGFloat(min(1,touchvibr - pretouchvibr)));}
         let adjustwithforce = Float(forceoftouch)
         pretouchvibr=(touchvibr + pretouchvibr*10)/11
         if inhibittimer == true {return}
         if newdepthframe == false && tap == false {return}
         let differencetouchvibr = (touchvibr-pretouchvibr)*adjustwithforce*deltamove/6
         let inte = Float(max(0,min(1,touchvibr + differencetouchvibr))); //let sharp = Float(max(0,min(1,1-touchvibr*differencetouchvibr)))
+        if soundnohaptic {
+            let adjustwithforce = Float(forceoftouch)
+            let differencetouchvibr = (touchvibr-pretouchvibr)*adjustwithforce*deltamove/6
+            let inte = Float(max(0,min(1,touchvibr + differencetouchvibr)));
+            sounds(environment: environment).soundvibrate(inte: 1, sharp: max(0,min(1,1-inte)))
+            
+            return
+        }
         let intensityvar = Float(max(0.01,min(1,pow(inte, 0.7))))
         let sharpnessvar = Float(max(0,min(1,1-inte)))
         switch vibrating {
@@ -1306,6 +1492,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     
     
     func analizza() {
+        if soundnohaptic {return}
         if inhibittimer == true {return}
         if sccreentouched {
             color = (filteredImage.image?.averageColor)!
@@ -1394,9 +1581,8 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             if let format = self.backCameradepth.activeDepthDataFormat,
               let range = format.videoSupportedFrameRateRanges.first  {self.backCameradepth.activeVideoMinFrameDuration = range.minFrameDuration}
             self.backCameradepth.unlockForConfiguration()
-        
+        self.addobserver()
         captureSession.startRunning()
-        DispatchQueue.main.async {self.addobserver();}
         self.view.isUserInteractionEnabled = true
         }
     /*
@@ -1425,7 +1611,9 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         }
     }
 */
-    func addobserver(){NotificationCenter.default.addObserver(self,selector: #selector(tempchange),name: ProcessInfo.thermalStateDidChangeNotification,object: nil)}
+    func addobserver(){
+        
+        NotificationCenter.default.addObserver(self,selector: #selector(tempchange),name: ProcessInfo.thermalStateDidChangeNotification,object: nil)}
     
    @objc func tempchange(){
     do {let state = ProcessInfo.processInfo.thermalState.rawValue
@@ -1437,7 +1625,131 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     if state > 1 {latoquadratoaudio = 3} else {latoquadratoaudio = 5}
     sounds(environment: environment).playsounds()
     }}
-    
+    func vibradepthrt(vibr: Float) {
+        if soundnohaptic {
+            let adjustwithforce = Float(forceoftouch)
+            let vibradj = pow(vibr+1,1.3)-1+(vibr-previbr)*pow(adjustwithforce,0.3)*deltamove/50
+            var sha = Float(0)
+            if depthpresence {sha = Float(max(0,min(1,1-vibradj)))} else {sha = 1 - Float(gradeofcolor/5)}
+            sounds(environment: environment).soundvibrate(inte: 1, sharp: sha)
+            return
+        }
+        if vibr > previbr + 0.15 {let gen = UIImpactFeedbackGenerator(); gen.impactOccurred(intensity: CGFloat(min(1,vibr - previbr)));}
+        let adjustwithforce = Float(forceoftouch)*0.7
+        let vibradj = pow(vibr+1,1.3)-1+(vibr-previbr)*pow(adjustwithforce,0.3)*deltamove/50
+        previbr=(vibr + previbr*10)/11
+        if inhibittimer == true {return}
+
+        let luminosity = 0.3333 + Float(intensitycolorofimage)/1152
+        var sha = Float(0)
+        if depthpresence {sha = Float(max(0,min(1,1-vibradj)))} else {sha = 1 - Float(gradeofcolor/5)}
+        print(sha)
+        switch vibrating {
+        case true:
+            let intensityvar = Float(luminosity)
+            let sharpnessvar = sha
+            
+            let intensityParameter = CHHapticDynamicParameter(parameterID: .hapticIntensityControl,
+                                                              value: intensityvar,
+                                                              relativeTime: 0)
+            
+            let sharpnessParameter = CHHapticDynamicParameter(parameterID: .hapticSharpnessControl,
+                                                              value: sharpnessvar,
+                                                              relativeTime: 0)
+            
+            do {
+                try player?.sendParameters([intensityParameter, sharpnessParameter],
+                                                    atTime: 0)
+                actualintensity = intensityvar
+                actualsharpness = sharpnessvar
+            } catch let error {
+                print("Dynamic Parameter Error: \(error)")
+            };
+            
+        default:
+            contintensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: luminosity)
+            contsharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: sha)
+            actualintensity = contintensity.value
+            actualsharpness = contsharpness.value
+        do {
+            let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [contintensity, contsharpness], relativeTime:0, duration: 10000)
+            let pattern = try CHHapticPattern(events: [event], parameters: [])
+            player = try engine?.makeAdvancedPlayer(with: pattern)
+            if !inhibittimer {   try player?.start(atTime: 0)}
+            vibrating = true;
+                    
+            } catch {
+            print("Failed to play pattern: \(error.localizedDescription).")
+            }
+    }
+    }
+
+    func vibradepthrtbast(vibr: Float, inclination: Float) {
+        if soundnohaptic {
+            let value = (max(-1,min(1,max(-200,inclination)/200))+1)/2
+            sounds(environment: environment).soundvibrate(inte: 1, sharp: value)
+            return
+        }
+        let value = (max(-1,min(1,max(-200,inclination)/200))+1)/2
+        let vibrintensity = max(abs(value-0.5)*2,vibr)
+                    contintensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: max(0.001,vibrintensity))
+                    contsharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: value)
+                do {
+                    let event = CHHapticEvent(eventType: .hapticTransient, parameters: [contintensity, contsharpness], relativeTime:0)
+            let pattern = try CHHapticPattern(events: [event], parameters: [])
+            player = try engine?.makeAdvancedPlayer(with: pattern)
+                    if !inhibittimer {  try player?.start(atTime: 0)}
+            vibrating = true
+                    countforbast = 0
+            } catch {
+            print("Failed to play pattern: \(error.localizedDescription).")
+            }
+    }
+
+
+    func vibracolor(color: [Int]) {
+        if soundnohaptic {
+            let redval1 = Float(color[0])/256
+            let greenval1 = Float(color[1])/256
+            let blueval1 = Float(color[2])/256
+            sounds(environment: environment).soundvibrate(inte: 1, sharp: (redval1 + greenval1 + blueval1)/3)
+            return
+        }
+        if inhibittimer || CACurrentMediaTime() < timetowave {return}
+        print(color)
+        var events = [CHHapticEvent]()
+        let redval1 = Float(color[0])/256
+        let greenval1 = Float(color[1])/256
+        let blueval1 = Float(color[2])/256
+        
+        let inte = Float(redval1+greenval1+blueval1)/6 + 0.3
+        let arrayvibrcolor = [pow(inte,Float(redval1/(max(0.0001,greenval1)))),pow(inte,Float(redval1/(max(0.0001,blueval1)))),pow(inte,Float(greenval1/(max(0.0001,(redval1+blueval1)/2)))),pow(inte,Float(greenval1/((max(0.0001,blueval1))))),pow(inte,Float(blueval1/(max(0.0001,greenval1)))),pow(inte,Float(blueval1/(max(0.0001,redval1))))]
+        for i in 0...5 {
+                let intensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: 1-(max(0,arrayvibrcolor[i])))
+                let sharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: max(0,min(1,arrayvibrcolor[i])))
+                let intervall : TimeInterval = TimeInterval((arrayvibrcolor[i]/7))
+                let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [intensity, sharpness], relativeTime:0.2*Double(i), duration: 0.1+intervall*Double(i))
+        events.append(event)
+        }
+        if vibrating {
+        do {
+            try player?.stop(atTime: CHHapticTimeImmediate)
+        } catch let error {
+            print("Error stopping the continuous haptic player: \(error)");return
+        }}
+            do {
+                
+        patternvibrcolor = try CHHapticPattern(events: events, parameters: [])
+        
+        player = try engine?.makeAdvancedPlayer(with: patternvibrcolor!)
+                if !inhibittimer {  try player?.start(atTime: 0)}
+                timetowave =  CACurrentMediaTime() + patternvibrcolor!.duration
+        events.removeAll()
+        } catch {
+        print("Failed to play pattern: \(error.localizedDescription).");return
+        }
+    }
+
 
     
     
@@ -1566,7 +1878,21 @@ extension CVPixelBuffer {
                                                         }
                   };
                 let incl = (preinclination*2+inclination)/3
-                if sccreentouched == true && countforbast > 15{vibradepthrtbast(vibr: 0.1, inclination: incl)}
+                if sccreentouched == true {if countforbast > 15{ViewController().vibradepthrtbast(vibr: 0.1, inclination: incl)}} else {
+                    switch soundnohaptic {
+                    case true:
+                        sounds(environment: ViewController().environment).soundvibrate(inte: 0, sharp: 0)
+                    default:
+                        if vibrating {
+                        do {
+                            try player?.stop(atTime: CHHapticTimeImmediate); vibrating = false
+                        } catch let error {
+                            print("Error stopping the continuous haptic player: \(error)")
+                        }}
+                    }
+                    
+                    
+                }
                 preinclination = incl
             default:
                 for y in stride(from: Int(Float(height)/2 - Float(height)/32), to: Int(Float(height)/2 + Float(height)/32), by: 1) {
@@ -1583,15 +1909,22 @@ extension CVPixelBuffer {
                 if abs(distance - prebastdistance) < 200 {distance = (prebastdistance*3 + mediumdistance)/4}
                 prebastdistance = mediumdistance
                 if firstcanedistance == true {maxbastonedistance = distance; firstcanedistance = false}
-                if distance > maxbastonedistance && countforbast > 15 {vibradepthrtbast(vibr: 0.9, inclination: -(granulosity/abs(mediumdistance)*10000-200))//hapticevent(intensit: granulosity/abs(mediumdistance))
+                if distance > maxbastonedistance && countforbast > 15 {ViewController().vibradepthrtbast(vibr: 0.9, inclination: -(granulosity/abs(mediumdistance)*10000-200))//hapticevent(intensit: granulosity/abs(mediumdistance))
                 preinclination = incl
                 } else
                 {
-                    do {
-                        try player?.stop(atTime: CHHapticTimeImmediate); vibrating = false
-                    } catch let error {
-                        print("Error stopping the continuous haptic player: \(error)")
+                    switch soundnohaptic {
+                    case true:
+                        sounds(environment: ViewController().environment).soundvibrate(inte: 0, sharp: 0)
+                    default:
+                        if vibrating {
+                        do {
+                            try player?.stop(atTime: CHHapticTimeImmediate); vibrating = false
+                        } catch let error {
+                            print("Error stopping the continuous haptic player: \(error)")
+                        }}
                     }
+
                 }
 
             }
@@ -1601,7 +1934,7 @@ extension CVPixelBuffer {
             if sccreentouched == true && tap == true { let x = Int(xtouch/2) //Int(1/(Double(forceoftouch ?? 0)-1.5))
             let y = Int((Float(heightcamera)-ytouch)/2) //Int(1/(Float(forceoftouch ?? 0)-1.5))
             if sccreentouched == true {
-            let adjustareaforc = (15-Float((forceoftouch)*2.5-2))*15
+            let adjustareaforc = (15-Float((forceoftouch)*2.5-2))*30
             let adjustareaforce = Int(adjustareaforc)
             let yareastart = max(0,y-(adjustareaforce))
             let yareaend = min(height - 1,y+(adjustareaforce))
@@ -1619,8 +1952,10 @@ extension CVPixelBuffer {
         }
             
                 var a = (floatBuffer[x * width + y])
+                
                 if a < 0 {a = 7 - a}
-                vibradepthrt(vibr: a/adjustscale)}
+            
+                ViewController().vibradepthrt(vibr: a/adjustscale)}
     };
 
     CVPixelBufferUnlockBaseAddress(self, CVPixelBufferLockFlags(rawValue: 0))
@@ -1629,110 +1964,6 @@ extension CVPixelBuffer {
 
 
 
-func vibradepthrt(vibr: Float) {
-    if vibr > previbr + 0.15 {let gen = UIImpactFeedbackGenerator(); gen.impactOccurred(intensity: CGFloat(min(1,vibr - previbr)));}
-    let adjustwithforce = Float(forceoftouch)*0.7
-    let vibradj = pow(vibr+1,1.3)-1+(vibr-previbr)*pow(adjustwithforce,0.3)*deltamove/20
-    previbr=(vibr + previbr*10)/11
-    if inhibittimer == true {return}
-
-    let luminosity = 0.3333 + Float(intensitycolorofimage)/1152
-    var sha = Float(0)
-    if depthpresence {sha = Float(max(0,min(2,2-vibradj)))/2} else {sha = 1 - Float(gradeofcolor/5)}
-    switch vibrating {
-    case true:
-        let intensityvar = Float(luminosity)
-        let sharpnessvar = sha
-        
-        let intensityParameter = CHHapticDynamicParameter(parameterID: .hapticIntensityControl,
-                                                          value: intensityvar,
-                                                          relativeTime: 0)
-        
-        let sharpnessParameter = CHHapticDynamicParameter(parameterID: .hapticSharpnessControl,
-                                                          value: sharpnessvar,
-                                                          relativeTime: 0)
-        
-        do {
-            try player?.sendParameters([intensityParameter, sharpnessParameter],
-                                                atTime: 0)
-            actualintensity = intensityvar
-            actualsharpness = sharpnessvar
-        } catch let error {
-            print("Dynamic Parameter Error: \(error)")
-        };
-        
-    default:
-        contintensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: luminosity)
-        contsharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: sha)
-        actualintensity = contintensity.value
-        actualsharpness = contsharpness.value
-    do {
-        let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [contintensity, contsharpness], relativeTime:0, duration: 10000)
-        let pattern = try CHHapticPattern(events: [event], parameters: [])
-        player = try engine?.makeAdvancedPlayer(with: pattern)
-        if !inhibittimer {   try player?.start(atTime: 0)}
-        vibrating = true;
-                
-        } catch {
-        print("Failed to play pattern: \(error.localizedDescription).")
-        }
-}
-}
-
-func vibradepthrtbast(vibr: Float, inclination: Float) {
-    let value = (max(-1,min(1,max(-200,inclination)/200))+1)/2
-    let vibrintensity = max(abs(value-0.5)*2,vibr)
-                contintensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: max(0.001,vibrintensity))
-                contsharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: value)
-            do {
-                let event = CHHapticEvent(eventType: .hapticTransient, parameters: [contintensity, contsharpness], relativeTime:0)
-        let pattern = try CHHapticPattern(events: [event], parameters: [])
-        player = try engine?.makeAdvancedPlayer(with: pattern)
-                if !inhibittimer {  try player?.start(atTime: 0)}
-        vibrating = true
-                countforbast = 0
-        } catch {
-        print("Failed to play pattern: \(error.localizedDescription).")
-        }
-}
-
-
-func vibracolor(color: [Int]) {
-   
-    if inhibittimer || CACurrentMediaTime() < timetowave {return}
-    print(color)
-    var events = [CHHapticEvent]()
-    let redval1 = Float(color[0])/256
-    let greenval1 = Float(color[1])/256
-    let blueval1 = Float(color[2])/256
-    
-    let inte = Float(redval1+greenval1+blueval1)/6 + 0.3
-    let arrayvibrcolor = [pow(inte,Float(redval1/(max(0.0001,greenval1)))),pow(inte,Float(redval1/(max(0.0001,blueval1)))),pow(inte,Float(greenval1/(max(0.0001,(redval1+blueval1)/2)))),pow(inte,Float(greenval1/((max(0.0001,blueval1))))),pow(inte,Float(blueval1/(max(0.0001,greenval1)))),pow(inte,Float(blueval1/(max(0.0001,redval1))))]
-    for i in 0...5 {
-            let intensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: 1-(max(0,arrayvibrcolor[i])))
-            let sharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: max(0,min(1,arrayvibrcolor[i])))
-            let intervall : TimeInterval = TimeInterval((arrayvibrcolor[i]/7))
-            let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [intensity, sharpness], relativeTime:0.2*Double(i), duration: 0.1+intervall*Double(i))
-    events.append(event)
-    }
-    if vibrating {
-    do {
-        try player?.stop(atTime: CHHapticTimeImmediate)
-    } catch let error {
-        print("Error stopping the continuous haptic player: \(error)");return
-    }}
-        do {
-            
-    patternvibrcolor = try CHHapticPattern(events: events, parameters: [])
-    
-    player = try engine?.makeAdvancedPlayer(with: patternvibrcolor!)
-            if !inhibittimer {  try player?.start(atTime: 0)}
-            timetowave =  CACurrentMediaTime() + patternvibrcolor!.duration
-    events.removeAll()
-    } catch {
-    print("Failed to play pattern: \(error.localizedDescription).");return
-    }
-}
 
 
 
@@ -1792,12 +2023,12 @@ class sounds : AVAudioMix{
       //  }
         audioPlayer.removeAll()
         environment.reset()
+        soundnohaptic = false
         if rengine.isRunning == false && audioPlayer.count == 0 {soundstred = false;captureSession.startRunning(); return false}
         return true
     }
     
     func changeposition(pos: [Float], colors: [Int]){
-      
         if audioPlayer.isEmpty {return}
         if audioPlayer.count != latoquadratoaudio*latoquadratoaudio*2{return}
         if audioPlayer[0].volume < 0.9 {
@@ -1837,9 +2068,66 @@ class sounds : AVAudioMix{
         updatedepth = false
     }
     
+    func soundon() {
+        let filetoplay = ["1","2","3","4","5","6","2","4","6","1","3","5","1","7","8","9","10","11","12","13","14","15","16","audio1"]
+        let path1 = Bundle.main.path(forResource: filetoplay[max(0,passtosound - 10)], ofType: "wav")!
+        let url = URL(fileURLWithPath: path1)
+        do{
+            let file = try AVAudioFile(forReading: url)
+            let songLengthSamples = file.length
+            let songFormat = file.processingFormat
+            let sampleRateSong = Double(songFormat.sampleRate)
+            let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(songLengthSamples))!
+            do {
+                try file.read(into: buffer)
+                } catch _ {
+                }
+        
+        environment.listenerPosition = AVAudio3DPoint(x: 0.0, y: 0.0, z: 0.0);
+        environment.listenerVectorOrientation = AVAudioMake3DVectorOrientation(AVAudioMake3DVector(0, 0, -1), AVAudioMake3DVector(0, 0, 0))
+        environment.listenerAngularOrientation = AVAudioMake3DAngularOrientation(0.0,0.0, 0.0)
+        environment.distanceAttenuationParameters.rolloffFactor = 1
+        rengine.attach(environment)
+        audioPlayer.append(AVAudioPlayerNode())
+            audioPlayer[0].renderingAlgorithm = .auto
+        audioPlayer[0].volume = 0
+        rengine.attach(audioPlayer[0])
+        rengine.connect(audioPlayer[0], to: environment, format:  AVAudioFormat.init(standardFormatWithSampleRate: sampleRateSong, channels: 1))
+            rengine.connect(environment, to: rengine.mainMixerNode, format:  nil)
+            rengine.prepare()
+            
+            do {
+                  try rengine.start()        } catch {
+                      print("Unable to start AVAudioEngine: \(error.localizedDescription)")
+                  }
+        
+        let time = AVAudioTime(hostTime: mach_absolute_time(), sampleTime: AVAudioFramePosition(0), atRate: sampleRateSong)
+        audioPlayer[0].scheduleBuffer(buffer, at: nil, options: AVAudioPlayerNodeBufferOptions.loops, completionHandler: nil)
+        audioPlayer[0].play(at: time)
+        } catch {}
+        soundnohaptic = true
+        audioPlayer[0].position = AVAudio3DPoint(x: 0, y: 0, z: -10)
+    }
+    
+    func soundoff(){
+        rengine.stop()
+        rengine.reset()
+        audioPlayer.removeAll()
+        environment.reset()
+        soundnohaptic = false
+    }
+    
+    func soundvibrate(inte: Float,sharp:Float){
+        audioPlayer[0].rate = sharp*1.5 + 0.5
+        audioPlayer[0].volume = inte
+        print("sharp",audioPlayer[0].rate)
+        audioPlayer[0].reverbBlend = sharp
+    }
+    
     func playsounds(){
         print("playsound")
         captureSession.stopRunning()
+        if soundnohaptic {soundoff()}
         if audioPlayer.count != latoquadratoaudio*latoquadratoaudio {resetlatoquadratoaudio(lato: latoquadratoaudio)}
         let filetoplay = ["1","2","3","4","5","6","2","4","6","1","3","5","1","7","8","9","10","11","12","13","14","15","16"]
         if musicfilenumber >= filetoplay.count-1{musicfilenumber = 0}
@@ -1932,5 +2220,15 @@ class sounds : AVAudioMix{
          colorvalues = Array(repeating:  90, count: lato*lato)
     }
 
+}
+
+extension AVCaptureDevice {
+    func setminframe() {
+        if let range = activeFormat.videoSupportedFrameRateRanges.first
+    {do {
+        activeVideoMinFrameDuration = CMTimeMake(value: 1, timescale: Int32(range.minFrameRate))
+       
+    }
+    }}
 }
 
